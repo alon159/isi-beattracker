@@ -35,11 +35,11 @@ if telegram_token is None:
 #States
 START_ROUTES, END_ROUTES = range(2)
 #Callback data
-ARTIST_SEARCH, EVENT_SEARCH, FOLLOWING = range(3)
+ARTIST_SEARCH, EVENT_SEARCH, FOLLOWING, ARTIST_INFO = range(4)
 #Artist seach states
 ARTIST_SEARCH_RESULTS = range(1)
 #Ending conversation
-FOLLOW, START_OVER, END = range(3)
+FOLLOW, UNFOLLOW, START_OVER, END = range(4)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
@@ -72,15 +72,33 @@ async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def buscar_artista(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Dime el artista que quieres buscar")
+    
     return ARTIST_SEARCH_RESULTS
 
 async def artist_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Buscando al artista, por favor espera...")
     resp = tm_client.attractions.find(keyword=update.message.text).all()
     keyboard = []
-    keyboard.append([InlineKeyboardButton("<-- Volver", callback_data=str(START_OVER))])
+    
+    # Get the dictionary of followed artists, if it doesn't exist, create a new one
+    followed_artists = context.user_data.get('followed_artists', {})
+
     for artist in resp:
-        keyboard.append([InlineKeyboardButton(artist.name, callback_data=str(FOLLOW)+"_"+artist.id+"_"+artist.name)])
+        # Check if the artist is followed by the user
+        if artist.id in followed_artists:
+            heart_emoji = "❤️"  # Filled heart for followed artists
+            action = UNFOLLOW
+        else:
+            heart_emoji = "♡"  # Empty heart for not followed artists
+            action = FOLLOW
+
+        keyboard.append([
+            InlineKeyboardButton(artist.name, callback_data=str(ARTIST_INFO)+"_"+artist.id+"_"+artist.name),
+            InlineKeyboardButton(f"{heart_emoji}", callback_data=str(action)+"_"+artist.id+"_"+artist.name)
+        ])
+    keyboard.append([InlineKeyboardButton("<-- Volver", callback_data=str(START_OVER))])
     reply_markup = InlineKeyboardMarkup(keyboard)
+
     await update.message.reply_text("Selecciona un artista:", reply_markup=reply_markup)
     return END_ROUTES
 
@@ -90,35 +108,90 @@ async def seguir_artista(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data=query.data.split("_")
     artist_id = data[1]
     artist_name = data[2]
-    # Obtiene la lista de artistas seguidos, si no existe, crea una nueva lista
-    followed_artists = context.user_data.get('artist_id', [])
 
-    # Añade el nuevo artista a la lista
-    followed_artists.append(artist_id)
+    # Get the dictionary of followed artists, if it doesn't exist, create a new one
+    followed_artists = context.user_data.get('followed_artists', {})
 
-    # Guarda la lista actualizada en la persistencia
-    context.user_data['artist_id'] = followed_artists
-    context.user_data['artist_name'] = artist_name
+    # Add the new artist to the dictionary
+    followed_artists[artist_id] = artist_name
+
+    # Save the updated dictionary in the persistence
+    context.user_data['followed_artists'] = followed_artists
     keyboard=[]
     keyboard.append([InlineKeyboardButton("<-- Volver", callback_data=str(START_OVER))])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text("Artista "+artist_name+" ("+artist_id+ ") "+" seguido", reply_markup=reply_markup)
+    await query.edit_message_text("<i>Artista <b>"+artist_name+"</b> seguido.</i>", reply_markup=reply_markup, parse_mode='HTML')
 
+async def dejar_seguir_artista(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query=update.callback_query
+    await query.answer()
+    data=query.data.split("_")
+    artist_id = data[1]
+    artist_name = data[2]
+
+    # Get the dictionary of followed artists, if it doesn't exist, create a new one
+    followed_artists = context.user_data.get('followed_artists', {})
+
+    # Remove the artist from the dictionary
+    if artist_id in followed_artists:
+        del followed_artists[artist_id]
+
+    # Save the updated dictionary in the persistence
+    context.user_data['followed_artists'] = followed_artists
+    keyboard=[]
+    keyboard.append([InlineKeyboardButton("<-- Volver", callback_data=str(START_OVER))])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text("<i>Has dejado de seguir al artista <b>"+artist_name+"</b>.</i>", reply_markup=reply_markup, parse_mode='HTML')
 
 async def buscar_evento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pass
 
 async def artistas_siguiendo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Recupera los datos de la persistencia
-    artist_ids = context.user_data.get('artist_id')
+    # Retrieve the data from the persistence
+    followed_artists = context.user_data.get('followed_artists')
 
-    if not artist_ids:
+    if not followed_artists:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="No estás siguiendo a ningún artista.")
         return
 
-    # Busca los artistas por sus IDs y los muestra
-    for artist_id in artist_ids:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=artist_id)
+    # Create a list to hold the buttons
+    keyboard = []
+
+    # Search the artists by their IDs and show them
+    for artist_id, artist_name in followed_artists.items():
+        # Create a button for each artist and add it to the list
+        keyboard.append([InlineKeyboardButton(artist_name, callback_data=str(ARTIST_INFO)+"_"+artist_id+"_"+artist_name)])
+    
+    keyboard.append([InlineKeyboardButton("<-- Volver", callback_data=str(START_OVER))])
+    # Create the keyboard markup with the buttons
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Send the message with the buttons
+    await update.callback_query.edit_message_text(text="Artistas que estás siguiendo:", reply_markup=reply_markup)
+    return END_ROUTES
+
+async def mostrar_info_artista(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split("_")
+    artist_id = data[1]
+    artist_name = data[2]
+    
+    if artist_name:
+        # Fetch events for the artist
+        events = tm_client.events.find(keyword=artist_name).all()
+        
+        # If there are no events, send a message indicating this
+        if not events:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"No events found for {artist_name}.")
+            return
+
+        # Iterate over the events and send each one as a message
+        for event in events:
+            event_info = f"<b><i>{event.name}</i></b>\n\n"
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=event_info, parse_mode='HTML')
+    else:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="Artista no encontrado.")
 
 async def end(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pass
@@ -139,7 +212,9 @@ def main():
                 MessageHandler(filters.TEXT, artist_button),
             ],
             END_ROUTES: [
+                CallbackQueryHandler(mostrar_info_artista, pattern="^" + str(ARTIST_INFO)),
                 CallbackQueryHandler(seguir_artista, pattern="^" + str(FOLLOW)),
+                CallbackQueryHandler(dejar_seguir_artista, pattern="^" + str(UNFOLLOW)),
                 CallbackQueryHandler(start_over, pattern="^" + str(START_OVER) + "$"),
                 CallbackQueryHandler(end, pattern="^" + str(END) + "$"),
             ]
