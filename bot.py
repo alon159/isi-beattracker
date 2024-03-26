@@ -1,3 +1,5 @@
+import datetime
+import hashlib
 import logging
 from warnings import filterwarnings
 from telegram.warnings import PTBUserWarning
@@ -32,46 +34,46 @@ telegram_token = os.getenv('API_TELEGRAM_TOKEN')
 if telegram_token is None:
     raise ValueError('API_TELEGRAM_TOKEN is not set')
 
-#States
-START_ROUTES, END_ROUTES = range(2)
-#Callback data
-ARTIST_SEARCH, EVENT_SEARCH, FOLLOWING, ARTIST_INFO = range(4)
-#Artist seach states
-ARTIST_SEARCH_RESULTS = range(1)
-#Ending conversation
-FOLLOW, UNFOLLOW, START_OVER, END = range(4)
+# States
+START_ROUTES, END_ROUTES = 0, 1
+# Callback data
+ARTIST_SEARCH, EVENT_SEARCH, FOLLOWING, ARTIST_INFO, EVENT_INFO = range(2, 7)
+# Artist search states
+ARTIST_SEARCH_RESULTS, EVENT_SEARCH_RESULTS = 7, 8
+# Ending conversation
+FOLLOW, UNFOLLOW, START_OVER, END = range(9, 13)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     logger.info("User %s started the conversation.", user.first_name)
 
     keyboard = [
-        [InlineKeyboardButton("Buscar artista", callback_data=str(ARTIST_SEARCH)),
-         InlineKeyboardButton("Buscar evento", callback_data=str(EVENT_SEARCH)),
-         InlineKeyboardButton("Artistas que sigo", callback_data=str(FOLLOWING))]
+        [InlineKeyboardButton("🔍 Buscar artista", callback_data=str(ARTIST_SEARCH)),
+         InlineKeyboardButton("📅 Buscar evento", callback_data=str(EVENT_SEARCH)),
+         InlineKeyboardButton("❤️ Siguiendo", callback_data=str(FOLLOWING))]
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text("Elige una opción", reply_markup=reply_markup)
+    
+    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=open('Resources/Bot-beatTracker-Logo.jpg', 'rb'), caption="Te damos la bienvenida a <b>BeatTracker</b>🎶\n\nEmpieza tu aventura gracias a <i>Ticketmaster</i> 🎫, selecciona una opción:", reply_markup=reply_markup, parse_mode='HTML')
     return START_ROUTES
 
 async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query=update.callback_query
     await query.answer()
     keyboard = [
-        [InlineKeyboardButton("Buscar artista", callback_data=str(ARTIST_SEARCH)),
-         InlineKeyboardButton("Buscar evento", callback_data=str(EVENT_SEARCH)),
-         InlineKeyboardButton("Artistas que sigo", callback_data=str(FOLLOWING))]
+        [InlineKeyboardButton("🔍 Buscar artista", callback_data=str(ARTIST_SEARCH)),
+         InlineKeyboardButton("📅 Buscar evento", callback_data=str(EVENT_SEARCH)),
+         InlineKeyboardButton("❤️ Siguiendo", callback_data=str(FOLLOWING))]
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await query.edit_message_text("Elige una opción", reply_markup=reply_markup)
+    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=open('Resources/Bot-beatTracker-Logo.jpg', 'rb'), caption="Te damos la bienvenida a <b>BeatTracker</b>🎶\n\nEmpieza tu aventura gracias a <i>Ticketmaster</i> 🎫, selecciona una opción:", reply_markup=reply_markup, parse_mode='HTML')
     return START_ROUTES
 
 async def buscar_artista(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Dime el artista que quieres buscar")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Escribe el artista que quieres buscar:")
     
     return ARTIST_SEARCH_RESULTS
 
@@ -144,7 +146,65 @@ async def dejar_seguir_artista(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.edit_message_text("<i>Has dejado de seguir al artista <b>"+artist_name+"</b>.</i>", reply_markup=reply_markup, parse_mode='HTML')
 
 async def buscar_evento(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pass
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Escribe el evento que quieres buscar:")
+    return EVENT_SEARCH_RESULTS
+
+async def event_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Buscando el evento, por favor espera...")
+    keyboard = []
+    seen_events = set()
+
+    try:
+        resp = tm_client.events.find(keyword=update.message.text).all()
+
+        for event in resp:
+            event_name = event.name
+
+            if event_name in seen_events:
+                continue
+            seen_events.add(event_name)
+
+            base_length = len(f"{EVENT_INFO}_{event.id}_")
+            if base_length + len(event_name.encode('utf-8')) > 64:
+                remaining_space = 64 - base_length
+                event_name = event_name[:remaining_space]
+        
+            button_text = f"{event_name}"
+            keyboard.append([
+                InlineKeyboardButton(button_text, callback_data=f"{EVENT_INFO}_{event.id}_{event_name}")
+            ])
+            if len(seen_events) >= 20:
+                break
+    except KeyError:
+        pass
+
+    keyboard.append([InlineKeyboardButton("<-- Volver", callback_data=str(START_OVER))])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text("Selecciona un evento:", reply_markup=reply_markup)
+    return END_ROUTES
+
+async def mostrar_info_evento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split("_")
+    event_id = data[1]
+    event_name = data[2]
+    
+    if event_name:
+        # Fetch info for the event
+        event = tm_client.events.get(event_id)
+        
+        # If there is no event, send a message indicating this
+        if not event:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"No event found for {event_name}.")
+            return
+
+        # Send the event info as a message
+        event_info = f"<b><i>{event.name}</i></b>\n\n"
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=event_info, parse_mode='HTML')
+    else:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="Event not found.")
 
 async def artistas_siguiendo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Retrieve the data from the persistence
@@ -167,7 +227,7 @@ async def artistas_siguiendo(update: Update, context: ContextTypes.DEFAULT_TYPE)
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     # Send the message with the buttons
-    await update.callback_query.edit_message_text(text="Artistas que estás siguiendo:", reply_markup=reply_markup)
+    await update.callback_query.message.reply_text(text="Artistas que estás siguiendo:", reply_markup=reply_markup)
     return END_ROUTES
 
 async def mostrar_info_artista(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -209,10 +269,14 @@ def main():
                 CallbackQueryHandler(artistas_siguiendo, pattern="^" + str(FOLLOWING) + "$"),
             ],
             ARTIST_SEARCH_RESULTS: [
-                MessageHandler(filters.TEXT, artist_button),
+                MessageHandler(filters.TEXT, artist_button),  # Use artist_button here
+            ],
+            EVENT_SEARCH_RESULTS: [
+                MessageHandler(filters.TEXT, event_button),
             ],
             END_ROUTES: [
                 CallbackQueryHandler(mostrar_info_artista, pattern="^" + str(ARTIST_INFO)),
+                CallbackQueryHandler(mostrar_info_evento, pattern="^" + str(EVENT_INFO)),
                 CallbackQueryHandler(seguir_artista, pattern="^" + str(FOLLOW)),
                 CallbackQueryHandler(dejar_seguir_artista, pattern="^" + str(UNFOLLOW)),
                 CallbackQueryHandler(start_over, pattern="^" + str(START_OVER) + "$"),
