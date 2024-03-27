@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import logging
+import sys
 from warnings import filterwarnings
 from telegram.warnings import PTBUserWarning
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -8,6 +9,7 @@ from telegram.ext import (ApplicationBuilder, PicklePersistence, ContextTypes,
                           ConversationHandler, CommandHandler, CallbackQueryHandler, MessageHandler,
                           filters)
 import ticketpy
+import pytz
 import os
 from dotenv import load_dotenv
 load_dotenv('token.env')
@@ -164,14 +166,20 @@ async def event_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 continue
             seen_events.add(event_name)
 
-            base_length = len(f"{EVENT_INFO}_{event.id}_")
-            if base_length + len(event_name.encode('utf-8')) > 64:
+            event_id_hash = hashlib.sha1(str(event.id).encode()).hexdigest()
+
+            base_length = sys.getsizeof(f"{EVENT_INFO}_{event_id_hash}_".encode('utf-8')) - 33
+            if base_length + sys.getsizeof(event_name.encode('utf-8')) - 33 > 64:
                 remaining_space = 64 - base_length
-                event_name = event_name[:remaining_space]
-        
+                # Calculate the number of characters that fit within the remaining space
+                i = 0
+                while sys.getsizeof(event_name[:i].encode('utf-8')) - 33 <= remaining_space:
+                    i += 1
+                event_name = event_name[:i-1]
+
             button_text = f"{event_name}"
             keyboard.append([
-                InlineKeyboardButton(button_text, callback_data=f"{EVENT_INFO}_{event.id}_{event_name}")
+                InlineKeyboardButton(button_text, callback_data=f"{EVENT_INFO}_{event_id_hash}_{event_name}")
             ])
             if len(seen_events) >= 20:
                 break
@@ -193,16 +201,50 @@ async def mostrar_info_evento(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     if event_name:
         # Fetch info for the event
-        event = tm_client.events.get(event_id)
+        event_search = tm_client.events.find(keyword=event_name).all()
         
         # If there is no event, send a message indicating this
-        if not event:
+        if not event_search:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=f"No event found for {event_name}.")
             return
+        
+        for event in event_search:
+            event_info = f"<b><i>{event.name}</i></b>\n\n"
+            
+            if event.status.lower() == 'onsale':
+                event_info += f"🟢 <b>En venta</b>\n"
+            else:
+                event_info += f"🟠 <b>{event.status}</b>\n"
+            
+            if event.price_ranges:
+                min_price = event.price_ranges[0]['min']
+                max_price = event.price_ranges[0]['max']
+                event_info += f"Desde <b>{min_price}€</b> hasta <b>{max_price}€</b>\n\n"
+            else:
+                event_info += "<b>Rango de precios no disponible</b>\n\n"
 
-        # Send the event info as a message
-        event_info = f"<b><i>{event.name}</i></b>\n\n"
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=event_info, parse_mode='HTML')
+            try:
+                if event.utc_datetime:
+                    utc_datetime = event.utc_datetime.replace(tzinfo=pytz.utc)
+                    spain_datetime = utc_datetime.astimezone(pytz.timezone('Europe/Madrid'))
+                elif event.local_datetime:
+                    spain_datetime = event.local_datetime
+                spain_date_str = spain_datetime.strftime('%d-%m-%Y')
+                spain_time_str = spain_datetime.strftime('%H:%M')
+            except AttributeError:
+                spain_date_str = 'No disponible'
+                spain_time_str = 'No disponible'
+
+            event_info += f"<b>Fecha (España):</b> {spain_date_str}\n"
+            event_info += f"<b>Hora (España):</b> {spain_time_str}\n\n"
+            event_info += f"<b>Lugar:</b> {', '.join([f'{venue.name}, {venue.city}' for venue in event.venues])}\n"
+
+            # TODO: Add the links to the event
+            event_info += "<b>Links:</b>\n"
+            for link in event.links:
+                event_info += f"{link}\n"
+            
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=event_info, parse_mode='HTML')
     else:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Event not found.")
 
