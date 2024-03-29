@@ -37,14 +37,16 @@ telegram_token = os.getenv('API_TELEGRAM_TOKEN')
 if telegram_token is None:
     raise ValueError('API_TELEGRAM_TOKEN is not set')
 
-# States
+
 START_ROUTES, END_ROUTES = 0, 1
-# Callback data
+
 ARTIST_SEARCH, EVENT_SEARCH, FOLLOWING, ARTIST_INFO, EVENT_INFO = range(2, 7)
-# Artist search states
+
 ARTIST_SEARCH_RESULTS, EVENT_SEARCH_RESULTS = 7, 8
-# Ending conversation
+
 FOLLOW, UNFOLLOW, START_OVER, END = range(9, 13)
+
+SHOW_CREATORS = 13
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
@@ -53,7 +55,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🔍 Buscar artista", callback_data=str(ARTIST_SEARCH)),
          InlineKeyboardButton("📅 Buscar evento", callback_data=str(EVENT_SEARCH)),
-         InlineKeyboardButton("❤️ Siguiendo", callback_data=str(FOLLOWING))]
+         InlineKeyboardButton("❤️ Siguiendo", callback_data=str(FOLLOWING))],
+        [InlineKeyboardButton("👥 Creadores", callback_data=str(SHOW_CREATORS))]
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -67,7 +70,8 @@ async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🔍 Buscar artista", callback_data=str(ARTIST_SEARCH)),
          InlineKeyboardButton("📅 Buscar evento", callback_data=str(EVENT_SEARCH)),
-         InlineKeyboardButton("❤️ Siguiendo", callback_data=str(FOLLOWING))]
+         InlineKeyboardButton("❤️ Siguiendo", callback_data=str(FOLLOWING))],
+        [InlineKeyboardButton("👥 Creadores", callback_data=str(SHOW_CREATORS))]
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -83,6 +87,7 @@ async def buscar_artista(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def artist_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Buscando al artista, por favor espera...")
     resp = tm_client.attractions.find(keyword=update.message.text).all()
+    
     return await generate_buttons(resp, ARTIST_INFO, update, context, "artista", include_follow=True)
 
 async def seguir_dejar_seguir_artista(update: Update, context: ContextTypes.DEFAULT_TYPE, follow: bool):
@@ -154,7 +159,7 @@ async def mostrar_info_evento(update: Update, context: ContextTypes.DEFAULT_TYPE
                 max_price = event.price_ranges[0]['max']
                 event_info += f"Desde <b>{min_price}€</b> hasta <b>{max_price}€</b>\n\n"
             else:
-                event_info += "<b>Rango de precios no disponible</b>\n\n"
+                event_info += "\n"
 
             try:
                 if event.utc_datetime:
@@ -169,36 +174,29 @@ async def mostrar_info_evento(update: Update, context: ContextTypes.DEFAULT_TYPE
                 spain_time_str = 'No disponible'
 
             event_info += f"<b>Fecha (España):</b> {spain_date_str}\n"
-            event_info += f"<b>Hora (España):</b> {spain_time_str}\n\n"
-            event_info += f"<b>Lugar:</b> {', '.join([f'{venue.name}, {venue.city}' for venue in event.venues])}\n"
-
-            # TODO: EVENT LINKS STILL NOT WORKING
-            event_info += "<b>Links:</b>\n"
+            event_info += f"<b>Hora (España):</b> {spain_time_str}\n"
+            event_info += f"<b>Lugar:</b> {', '.join([f'{venue.name}, {venue.city}' for venue in event.venues])}\n\n"
             
-            # Extract base URL from one of the provided relative URLs
-            base_url = "https://www.ticketmaster.com"
+            try:
+                url = event.json['url']
+            except KeyError:
+                url = 'No disponible'
 
-            # Iterate over the links and create full URLs
-            for link_type, links in event.links.items():
-                event_info += f"<b>{link_type.capitalize()}:</b>\n"
-                if isinstance(links, list):
-                    for link in links:
-                        href = link['href']
-                        full_url = f"{base_url}{href}"
-                        event_info += f"<a href='{full_url}'>{full_url}</a>\n"
-                else:
-                    href = links
-                    full_url = f"{base_url}{href}"
-                    event_info += f"<a href='{full_url}'>{full_url}</a>\n"
-                    
+            event_info += "<b>Link:</b> <a href='" + url + "'>" + url + "</a>\n"
+            
+            # Access the images list
+            images = event.json['images']
+            main_image = images[0]['url']
+
             # Check if it's the last event
             if index == len(event_search) - 1:
                 # Create a "Go back" button
                 keyboard = [[InlineKeyboardButton("<-- Volver", callback_data=str(START_OVER))]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=event_info, parse_mode='HTML', reply_markup=reply_markup)
+                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=main_image, caption=event_info, parse_mode='HTML', reply_markup=reply_markup)
             else:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=event_info, parse_mode='HTML')
+                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=main_image, caption=event_info, parse_mode='HTML')
+
     else:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Event not found.")
 
@@ -212,7 +210,7 @@ async def artistas_siguiendo(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # Convert followed artists dictionary into a list of tuples for generating buttons
     followed_artists_list = [(artist_id, artist_name) for artist_id, artist_name in followed_artists.items()]
-
+            
     # Generate buttons using the modified function
     await generate_buttons(followed_artists_list, ARTIST_INFO, update, context, "artista", include_follow=True)
 
@@ -227,7 +225,11 @@ async def mostrar_info_artista(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if artist_name:
         # Fetch events for the artist
-        events = tm_client.events.find(keyword=artist_name).all()
+        try:
+            events = tm_client.events.find(keyword=artist_name).all()
+        except KeyError as e:
+            logging.error(f"KeyError: {e}")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Ocurrió un error al procesar la búsqueda ⚠️. Prueba una búsqueda diferente.")
 
         # If there are no events, send a message indicating this
         if not events:
@@ -308,7 +310,17 @@ async def generate_buttons(items, callback_prefix, update, context, item_type, c
 
     return END_ROUTES
 
+async def showCreators(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a message with the names of the creators when the command /creators is issued."""
+    query = update.callback_query
+    await query.answer()
 
+    keyboard = [[InlineKeyboardButton("<-- Volver", callback_data=str(START_OVER))]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await context.bot.send_message(chat_id=update.effective_chat.id, text='<b>Creadores de este proyecto:</b>\n👤 Felipe Alcázar Gómez\n👤 Alonso Crespo Fernández\n👤 Marcos Isabel Lumbreras\n\n<i>*Este bot ha sido creado mediante la libreria Ticketpy de python para la asignatura de Integración de Sistemas Informáticos (Universidad De Castilla La Mancha).</i>', reply_markup=reply_markup, parse_mode='HTML')
+    return END_ROUTES
+    
 async def end(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pass
 
@@ -323,6 +335,7 @@ def main():
                 CallbackQueryHandler(buscar_artista, pattern="^" + str(ARTIST_SEARCH) + "$"),
                 CallbackQueryHandler(buscar_evento, pattern="^" + str(EVENT_SEARCH) + "$"),
                 CallbackQueryHandler(artistas_siguiendo, pattern="^" + str(FOLLOWING) + "$"),
+                CallbackQueryHandler(showCreators, pattern="^" + str(SHOW_CREATORS) + "$"),
             ],
             ARTIST_SEARCH_RESULTS: [
                 MessageHandler(filters.TEXT, artist_button),  # Use artist_button here
