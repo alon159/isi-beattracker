@@ -15,7 +15,6 @@ import os
 from dotenv import load_dotenv
 load_dotenv('token.env')
 
-#Logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -23,16 +22,13 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-#Filter warnings
 filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 
-#Ticketmaster API
 ticketmaster_token = os.getenv('API_TICKETMASTER_TOKEN')
 if ticketmaster_token is None:
     raise ValueError('API_TICKETMASTER_TOKEN is not set')
 tm_client = ticketpy.ApiClient(ticketmaster_token)
 
-#Telegram API
 telegram_token = os.getenv('API_TELEGRAM_TOKEN')
 if telegram_token is None:
     raise ValueError('API_TELEGRAM_TOKEN is not set')
@@ -96,11 +92,9 @@ async def seguir_dejar_seguir_artista(update: Update, context: ContextTypes.DEFA
     data = query.data.split("_")
     artist_id = data[1]
     artist_name = data[2]
-
-    # Get the dictionary of followed artists, if it doesn't exist, create a new one
+    
     followed_artists = context.user_data.get('followed_artists', {})
 
-    # Follow or unfollow the artist based on the 'follow' parameter
     if follow:
         followed_artists[artist_id] = artist_name
         message_text = f"<i>Artista <b>{artist_name}</b> seguido.</i>"
@@ -109,7 +103,6 @@ async def seguir_dejar_seguir_artista(update: Update, context: ContextTypes.DEFA
             del followed_artists[artist_id]
         message_text = f"<i>Has dejado de seguir al artista <b>{artist_name}</b>.</i>"
 
-    # Save the updated dictionary in the persistence
     context.user_data['followed_artists'] = followed_artists
     
     keyboard = [[InlineKeyboardButton("<-- Volver", callback_data=str(START_OVER))]]
@@ -138,10 +131,8 @@ async def mostrar_info_evento(update: Update, context: ContextTypes.DEFAULT_TYPE
     event_name = data[2]
     
     if event_name:
-        # Fetch info for the event
         event_search = tm_client.events.find(keyword=event_name).all()
         
-        # If there is no event, send a message indicating this
         if not event_search:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Sin información para el evento <b>{event_name}</b>.", parse_mode='HTML')
             return
@@ -184,13 +175,10 @@ async def mostrar_info_evento(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             event_info += "<b>Link:</b> <a href='" + url + "'>" + url + "</a>\n"
             
-            # Access the images list
             images = event.json['images']
             main_image = images[0]['url']
 
-            # Check if it's the last event
             if index == len(event_search) - 1:
-                # Create a "Go back" button
                 keyboard = [[InlineKeyboardButton("<-- Volver", callback_data=str(START_OVER))]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await context.bot.send_photo(chat_id=update.effective_chat.id, photo=main_image, caption=event_info, parse_mode='HTML', reply_markup=reply_markup)
@@ -201,17 +189,14 @@ async def mostrar_info_evento(update: Update, context: ContextTypes.DEFAULT_TYPE
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Event not found.")
 
 async def artistas_siguiendo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Retrieve the data from the persistence
     followed_artists = context.user_data.get('followed_artists')
 
     if not followed_artists:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="No estás siguiendo a ningún artista.")
         return
 
-    # Convert followed artists dictionary into a list of tuples for generating buttons
     followed_artists_list = [(artist_id, artist_name) for artist_id, artist_name in followed_artists.items()]
-            
-    # Generate buttons using the modified function
+
     await generate_buttons(followed_artists_list, ARTIST_INFO, update, context, "artista", include_follow=True)
 
     return END_ROUTES
@@ -224,14 +209,12 @@ async def mostrar_info_artista(update: Update, context: ContextTypes.DEFAULT_TYP
     artist_name = data[2]
 
     if artist_name:
-        # Fetch events for the artist
         try:
             events = tm_client.events.find(keyword=artist_name).all()
         except KeyError as e:
             logging.error(f"KeyError: {e}")
             await context.bot.send_message(chat_id=update.effective_chat.id, text="Ocurrió un error al procesar la búsqueda ⚠️. Prueba una búsqueda diferente.")
 
-        # If there are no events, send a message indicating this
         if not events:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Sin eventos para el artista <b>{artist_name}</b>.", parse_mode='HTML')
             return
@@ -244,7 +227,6 @@ async def generate_buttons(items, callback_prefix, update, context, item_type, c
     keyboard = []
     seen_items = set()
 
-    # Get the dictionary of followed items, if it doesn't exist, create a new one
     followed_items = context.user_data.get('followed_artists', {})
 
     for item in items:
@@ -254,7 +236,7 @@ async def generate_buttons(items, callback_prefix, update, context, item_type, c
             item_id = item.id
             item_name = item.name
 
-        # Ensure each item is unique (avoid duplicates)
+        # Ensure each item is unique
         if item_name in seen_items:
             continue
         seen_items.add(item_name)
@@ -265,7 +247,6 @@ async def generate_buttons(items, callback_prefix, update, context, item_type, c
         base_length = len(f"{callback_prefix}_{item_id_hash}_".encode('utf-8'))
         if base_length + len(item_name.encode('utf-8')) > 64:
             remaining_space = 64 - base_length
-            # Calculate the number of characters that fit within the remaining space
             i = 0
             while len(item_name[:i].encode('utf-8')) <= remaining_space:
                 i += 1
@@ -274,29 +255,24 @@ async def generate_buttons(items, callback_prefix, update, context, item_type, c
         buttons_row = [InlineKeyboardButton(item_name, callback_data=f"{callback_prefix}_{item_id_hash}_{item_name}")]
 
         if include_follow:
-            # Check if the item is followed by the user
             if item_id in followed_items:
-                heart_emoji = "❤️"  # Filled heart for followed items
+                heart_emoji = "❤️"
                 action = UNFOLLOW
             else:
-                heart_emoji = "♡"  # Empty heart for not followed items
+                heart_emoji = "♡"
                 action = FOLLOW
-            
+
             buttons_row.append(InlineKeyboardButton(heart_emoji, callback_data=f"{action}_{item_id}_{item_name}"))
 
         keyboard.append(buttons_row)
 
-        # Check if maximum number of buttons is reached
         if len(seen_items) >= 20:
             break
 
-    # Add a button to go back
     keyboard.append([InlineKeyboardButton("<-- Volver", callback_data=str(START_OVER))])
 
-    # Create the keyboard markup with the buttons
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Send the message with the buttons
     if chat_id is None:
         if isinstance(update, Update):
             chat_id = update.effective_chat.id
@@ -338,7 +314,7 @@ def main():
                 CallbackQueryHandler(showCreators, pattern="^" + str(SHOW_CREATORS) + "$"),
             ],
             ARTIST_SEARCH_RESULTS: [
-                MessageHandler(filters.TEXT, artist_button),  # Use artist_button here
+                MessageHandler(filters.TEXT, artist_button),
             ],
             EVENT_SEARCH_RESULTS: [
                 MessageHandler(filters.TEXT, event_button),
@@ -355,10 +331,8 @@ def main():
         fallbacks=[CommandHandler('start', start)]
     )
 
-    # Add ConversationHandler to application that will be used for handling updates
     application.add_handler(conv_handler)
 
-    # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
