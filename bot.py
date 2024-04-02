@@ -82,7 +82,7 @@ async def buscar_artista(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def artist_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Buscando al artista, por favor espera...")
-    resp = tm_client.attractions.find(keyword=update.message.text).all()
+    resp = tm_client.attractions.find(keyword=update.message.text, source=["ticketmaster", "frontgate", "tmr"]).all()
     
     return await generate_buttons(resp, ARTIST_INFO, update, context, "artista", include_follow=True)
 
@@ -117,7 +117,7 @@ async def buscar_evento(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def event_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Buscando el evento, por favor espera...")
     try:
-        resp = tm_client.events.find(keyword=update.message.text).all()
+        resp = tm_client.events.find(keyword=update.message.text, source=["ticketmaster", "frontgate", "tmr"]).all()
         return await generate_buttons(resp, EVENT_INFO, update, context, "evento")
     except KeyError as e:
         logging.error(f"KeyError: {e}")
@@ -131,7 +131,7 @@ async def mostrar_info_evento(update: Update, context: ContextTypes.DEFAULT_TYPE
     event_name = data[2]
     
     if event_name:
-        event_search = tm_client.events.find(keyword=event_name).all()
+        event_search = tm_client.events.find(keyword=event_name, source=["ticketmaster", "frontgate", "tmr"]).all()
         
         if not event_search:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Sin información para el evento <b>{event_name}</b>.", parse_mode='HTML')
@@ -212,7 +212,7 @@ async def mostrar_info_artista(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if artist_name:
         try:
-            events = tm_client.events.find(keyword=artist_name).all()
+            events = tm_client.events.find(keyword=artist_name, source=["ticketmaster", "frontgate", "tmr"]).all()
         except KeyError as e:
             logging.error(f"KeyError: {e}")
             await context.bot.send_message(chat_id=update.effective_chat.id, text="Ocurrió un error al procesar la búsqueda ⚠️. Prueba una búsqueda diferente.")
