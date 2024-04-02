@@ -207,6 +207,8 @@ async def mostrar_info_artista(update: Update, context: ContextTypes.DEFAULT_TYP
     data = query.data.split("_")
     artist_id = data[1]
     artist_name = data[2]
+    
+    events= []
 
     if artist_name:
         try:
