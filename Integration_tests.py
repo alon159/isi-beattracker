@@ -102,7 +102,7 @@ class TestIntegration(unittest.IsolatedAsyncioTestCase):
 
         context_mock.bot.send_message.assert_any_call(chat_id=update_mock.effective_chat.id, text="Buscando al artista, por favor espera...")
 
-        tm_client_mock.attractions.find.assert_called_once_with(keyword=update_mock.message.text)
+        tm_client_mock.attractions.find.assert_called_once_with(keyword=update_mock.message.text, source=['ticketmaster', 'frontgate', 'tmr'])
 
         self.assertEqual(result, await generate_buttons([mock_attraction], ARTIST_INFO, update_mock, context_mock, "artista", include_follow=True))
 
