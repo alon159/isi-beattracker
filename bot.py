@@ -1,8 +1,7 @@
-import datetime
+import time
 import functools
 import hashlib
 import logging
-import sys
 from warnings import filterwarnings
 from telegram.warnings import PTBUserWarning
 from telegram import CallbackQuery, Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -11,6 +10,9 @@ from telegram.ext import (ApplicationBuilder, PicklePersistence, ContextTypes,
                           filters)
 import ticketpy
 import pytz
+import schedule
+import threading
+import pickle
 import os
 from dotenv import load_dotenv
 load_dotenv('token.env')
@@ -302,6 +304,17 @@ async def showCreators(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def end(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pass
 
+def detectar_nuevos_eventos():
+    with open('conversationbot.pickle', 'rb') as f:
+        user_data = pickle.load(f)
+    print(user_data['user_data'][1007424232])
+
+def notificar_nuevos_eventos():
+    schedule.every().day.at("19:45").do(detectar_nuevos_eventos)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+          
 def main():
     persistence = PicklePersistence(filepath='conversationbot.pickle')
     application = ApplicationBuilder().token(telegram_token).persistence(persistence).build()
@@ -333,9 +346,13 @@ def main():
         fallbacks=[CommandHandler('start', start)]
     )
 
+    schedule_thread = threading.Thread(target=notificar_nuevos_eventos)
+    schedule_thread.daemon = True
+    schedule_thread.start()
+    
     application.add_handler(conv_handler)
-
     application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
 
 if __name__ == '__main__':
     main()
