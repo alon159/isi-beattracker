@@ -10,9 +10,9 @@ from telegram.ext import (ApplicationBuilder, PicklePersistence, ContextTypes,
                           filters)
 import ticketpy
 import pytz
-import schedule
+import datetime
 import threading
-import pickle
+import asyncio
 import os
 from dotenv import load_dotenv
 load_dotenv('token.env')
@@ -35,6 +35,8 @@ telegram_token = os.getenv('API_TELEGRAM_TOKEN')
 if telegram_token is None:
     raise ValueError('API_TELEGRAM_TOKEN is not set')
 
+HORA_NOTIFICACION = (12,38)# Hora a la que se notificarán los eventos nuevos 12:29
+
 
 START_ROUTES, END_ROUTES = 0, 1
 
@@ -49,6 +51,11 @@ SHOW_CREATORS = 13
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     logger.info("User %s started the conversation.", user.first_name)
+
+    if context.user_data.get('followed_artists') is not None:
+        thread = threading.Thread(target=asyncio.run, args=(notificar_nuevos_eventos(update, context),), name="Notificaciones")
+        thread.daemon = True
+        thread.start()
 
     keyboard = [
         [InlineKeyboardButton("🔍 Buscar artista", callback_data=str(ARTIST_SEARCH)),
@@ -304,16 +311,26 @@ async def showCreators(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def end(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pass
 
-def detectar_nuevos_eventos():
-    with open('conversationbot.pickle', 'rb') as f:
-        user_data = pickle.load(f)
-    print(user_data['user_data'][1007424232])
+async def detectar_nuevos_eventos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    followed_artists = context.user_data.get('followed_artists')
+    events = context.user_data.get('events', [])
+    for artist_id, artist_name in followed_artists.items():
+        current_events = tm_client.events.find(attraction_id=artist_id, source=["ticketmaster", "frontgate", "tmr"]).all()
+        for event in current_events:
+            if event.id not in events:
+                print(f"Nuevo evento encontrado: {event.name} de {artist_name}.")
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Nuevo evento encontrado: {event.name} de {artist_name}.", disable_notification=False)
+                events.append(event.id)
+    context.user_data['events'] = events
 
-def notificar_nuevos_eventos():
-    schedule.every().day.at("19:45").do(detectar_nuevos_eventos)
+async def notificar_nuevos_eventos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     while True:
-        schedule.run_pending()
-        time.sleep(1)
+        now = datetime.datetime.now()
+        target_time = datetime.datetime.combine(now, datetime.time(*HORA_NOTIFICACION))
+        if target_time < now:
+            target_time += datetime.timedelta(days=1)
+        await asyncio.sleep((target_time - now).total_seconds())
+        await detectar_nuevos_eventos(update, context)
           
 def main():
     persistence = PicklePersistence(filepath='conversationbot.pickle')
@@ -346,9 +363,6 @@ def main():
         fallbacks=[CommandHandler('start', start)]
     )
 
-    schedule_thread = threading.Thread(target=notificar_nuevos_eventos)
-    schedule_thread.daemon = True
-    schedule_thread.start()
     
     application.add_handler(conv_handler)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
