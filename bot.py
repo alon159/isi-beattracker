@@ -35,7 +35,7 @@ telegram_token = os.getenv('API_TELEGRAM_TOKEN')
 if telegram_token is None:
     raise ValueError('API_TELEGRAM_TOKEN is not set')
 
-HORA_NOTIFICACION = (12,38)# Hora a la que se notificarán los eventos nuevos 12:29
+HORA_NOTIFICACION = (9,0)# Hora a la que se notificarán los eventos nuevos 09:00
 
 
 START_ROUTES, END_ROUTES = 0, 1
@@ -150,9 +150,9 @@ async def mostrar_info_evento(update: Update, context: ContextTypes.DEFAULT_TYPE
             event_info = f"<b><i>{event.name}</i></b>\n\n"
             
             if event.status.lower() == 'onsale':
-                event_info += f"🟢 <b>En venta</b>\n"
+                event_info += f"🟢 <b>EN VENTA</b>\n"
             else:
-                event_info += f"🟠 <b>{event.status}</b>\n"
+                event_info += f"🟠 <b>{event.status.upper()}</b>\n"
             
             if event.price_ranges:
                 min_price = event.price_ranges[0]['min']
@@ -318,8 +318,47 @@ async def detectar_nuevos_eventos(update: Update, context: ContextTypes.DEFAULT_
         current_events = tm_client.events.find(attraction_id=artist_id, source=["ticketmaster", "frontgate", "tmr"]).all()
         for event in current_events:
             if event.id not in events:
-                print(f"Nuevo evento encontrado: {event.name} de {artist_name}.")
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Nuevo evento encontrado: {event.name} de {artist_name}.", disable_notification=False)
+                event_info = f"<b><i>{event.name}</i></b>\n\n"
+            
+                if event.status.lower() == 'onsale':
+                    event_info += f"🟢 <b>EN VENTA</b>\n"
+                else:
+                    event_info += f"🟠 <b>{event.status.upper()}</b>\n"
+
+                if event.price_ranges:
+                    min_price = event.price_ranges[0]['min']
+                    max_price = event.price_ranges[0]['max']
+                    event_info += f"Desde <b>{min_price}€</b> hasta <b>{max_price}€</b>\n\n"
+                else:
+                    event_info += "\n"
+
+                try:
+                    if event.utc_datetime:
+                        utc_datetime = event.utc_datetime.replace(tzinfo=pytz.utc)
+                        spain_datetime = utc_datetime.astimezone(pytz.timezone('Europe/Madrid'))
+                    elif event.local_datetime:
+                        spain_datetime = event.local_datetime
+                    spain_date_str = spain_datetime.strftime('%d-%m-%Y')
+                    spain_time_str = spain_datetime.strftime('%H:%M')
+                except AttributeError:
+                    spain_date_str = 'No disponible'
+                    spain_time_str = 'No disponible'
+
+                event_info += f"<b>Fecha (España):</b> {spain_date_str}\n"
+                event_info += f"<b>Hora (España):</b> {spain_time_str}\n"
+                event_info += f"<b>Lugar:</b> {', '.join([f'{venue.name}, {venue.city}' for venue in event.venues])}\n\n"
+
+                try:
+                    url = event.json['url']
+                except KeyError:
+                    url = 'No disponible'
+
+                event_info += "<b>Link:</b> <a href='" + url + "'>" + url + "</a>\n"
+
+                images = event.json['images']
+                main_image = images[0]['url']
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"🎫 Evento nuevo de {artist_name}", disable_notification=False)
+                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=main_image, caption=event_info, parse_mode='HTML', disable_notification=False)
                 events.append(event.id)
     context.user_data['events'] = events
 
